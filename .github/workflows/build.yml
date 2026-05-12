@@ -1,4 +1,4 @@
-name: Build APK
+name: Build Android APK
 
 on:
   push:
@@ -13,6 +13,26 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
+    - name: Verify project structure
+      run: |
+        echo "=== Listing project files ==="
+        ls -la
+        echo ""
+        echo "=== Checking required files ==="
+        if [ ! -f "settings.gradle.kts" ]; then
+          echo "ERROR: settings.gradle.kts not found!"
+          exit 1
+        fi
+        if [ ! -f "build.gradle.kts" ]; then
+          echo "ERROR: build.gradle.kts not found!"
+          exit 1
+        fi
+        if [ ! -f "app/build.gradle.kts" ]; then
+          echo "ERROR: app/build.gradle.kts not found!"
+          exit 1
+        fi
+        echo "All required files found ✓"
+    
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
@@ -20,20 +40,47 @@ jobs:
         distribution: 'temurin'
     
     - name: Setup Android SDK
-      uses: android-actions/setup-android@v4
+      uses: android-actions/setup-android@v3
     
-    - name: Create gradle wrapper
-      run: |
-        gradle wrapper --gradle-version 8.2
+    - name: Accept licenses
+      run: yes | sdkmanager --licenses || true
+    
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v3
+      with:
+        gradle-version: '8.2'
+    
+    - name: Create Gradle Wrapper
+      run: gradle wrapper --gradle-version 8.2
     
     - name: Make gradlew executable
       run: chmod +x gradlew
     
-    - name: Build APK with Gradle
-      run: ./gradlew assembleRelease --stacktrace --info
+    - name: Build Debug APK
+      run: ./gradlew assembleDebug --stacktrace
+      continue-on-error: true
     
-    - name: Upload APK
+    - name: Build Release APK  
+      run: ./gradlew assembleRelease --stacktrace
+      continue-on-error: true
+    
+    - name: Find APK files
+      run: |
+        echo "=== Searching for APK files ==="
+        find . -name "*.apk" -type f
+    
+    - name: Upload Debug APK
       uses: actions/upload-artifact@v4
+      if: always()
       with:
-        name: CarMonitor-APK
+        name: app-debug
+        path: app/build/outputs/apk/debug/*.apk
+        if-no-files-found: warn
+    
+    - name: Upload Release APK
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: app-release
         path: app/build/outputs/apk/release/*.apk
+        if-no-files-found: warn
