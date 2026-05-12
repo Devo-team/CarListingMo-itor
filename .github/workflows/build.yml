@@ -1,4 +1,4 @@
-name: Auto-Setup and Build APK
+name: Build Android APK - Auto Fix
 
 on:
   push:
@@ -13,6 +13,176 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
+    - name: List current structure
+      run: |
+        echo "=== Current repository structure ==="
+        find . -type f -name "*.gradle.kts" -o -name "*.kt" -o -name "*.xml" | head -20
+    
+    - name: Create missing files and directories
+      run: |
+        # Create app directory
+        mkdir -p app/src/main/java/com/carmonitor/app
+        mkdir -p app/src/main/res/values
+        mkdir -p gradle/wrapper
+        
+        # Create app/build.gradle.kts if missing
+        if [ ! -f "app/build.gradle.kts" ]; then
+          echo "Creating app/build.gradle.kts..."
+          cat > app/build.gradle.kts << 'EOFGRADLE'
+        plugins {
+            id("com.android.application")
+            id("org.jetbrains.kotlin.android")
+        }
+
+        android {
+            namespace = "com.carmonitor.app"
+            compileSdk = 34
+
+            defaultConfig {
+                applicationId = "com.carmonitor.app"
+                minSdk = 24
+                targetSdk = 34
+                versionCode = 1
+                versionName = "1.0"
+            }
+
+            buildTypes {
+                release {
+                    isMinifyEnabled = false
+                }
+            }
+            
+            compileOptions {
+                sourceCompatibility = JavaVersion.VERSION_17
+                targetCompatibility = JavaVersion.VERSION_17
+            }
+            
+            kotlinOptions {
+                jvmTarget = "17"
+            }
+            
+            buildFeatures {
+                compose = true
+            }
+            
+            composeOptions {
+                kotlinCompilerExtensionVersion = "1.5.1"
+            }
+        }
+
+        dependencies {
+            implementation("androidx.core:core-ktx:1.12.0")
+            implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
+            implementation("androidx.activity:activity-compose:1.8.1")
+            implementation(platform("androidx.compose:compose-bom:2023.10.01"))
+            implementation("androidx.compose.ui:ui")
+            implementation("androidx.compose.ui:ui-graphics")
+            implementation("androidx.compose.material3:material3")
+            implementation("androidx.compose.material:material-icons-extended")
+        }
+        EOFGRADLE
+        fi
+        
+        # Create MainActivity.kt if missing
+        if [ ! -f "app/src/main/java/com/carmonitor/app/MainActivity.kt" ]; then
+          echo "Creating MainActivity.kt..."
+          cat > app/src/main/java/com/carmonitor/app/MainActivity.kt << 'EOFKT'
+        package com.carmonitor.app
+
+        import android.os.Bundle
+        import androidx.activity.ComponentActivity
+        import androidx.activity.compose.setContent
+        import androidx.compose.foundation.layout.*
+        import androidx.compose.material.icons.Icons
+        import androidx.compose.material.icons.filled.DirectionsCar
+        import androidx.compose.material3.*
+        import androidx.compose.runtime.*
+        import androidx.compose.ui.Alignment
+        import androidx.compose.ui.Modifier
+        import androidx.compose.ui.unit.dp
+
+        class MainActivity : ComponentActivity() {
+            override fun onCreate(savedInstanceState: Bundle?) {
+                super.onCreate(savedInstanceState)
+                setContent {
+                    MaterialTheme {
+                        Surface(modifier = Modifier.fillMaxSize()) {
+                            CarMonitorScreen()
+                        }
+                    }
+                }
+            }
+        }
+
+        @Composable
+        fun CarMonitorScreen() {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    Icons.Default.DirectionsCar,
+                    contentDescription = null,
+                    modifier = Modifier.size(64.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    "Car Monitor",
+                    style = MaterialTheme.typography.headlineMedium
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Build réussi! 🎉",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+        }
+        EOFKT
+        fi
+        
+        # Create AndroidManifest.xml if missing
+        if [ ! -f "app/src/main/AndroidManifest.xml" ]; then
+          echo "Creating AndroidManifest.xml..."
+          cat > app/src/main/AndroidManifest.xml << 'EOFXML'
+        <?xml version="1.0" encoding="utf-8"?>
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <application
+                android:allowBackup="true"
+                android:icon="@android:drawable/ic_dialog_info"
+                android:label="Car Monitor"
+                android:theme="@android:style/Theme.Material.Light">
+                <activity
+                    android:name=".MainActivity"
+                    android:exported="true">
+                    <intent-filter>
+                        <action android:name="android.intent.action.MAIN" />
+                        <category android:name="android.intent.category.LAUNCHER" />
+                    </intent-filter>
+                </activity>
+            </application>
+        </manifest>
+        EOFXML
+        fi
+        
+        # Create strings.xml if missing
+        if [ ! -f "app/src/main/res/values/strings.xml" ]; then
+          echo "Creating strings.xml..."
+          cat > app/src/main/res/values/strings.xml << 'EOFSTRINGS'
+        <?xml version="1.0" encoding="utf-8"?>
+        <resources>
+            <string name="app_name">Car Monitor</string>
+        </resources>
+        EOFSTRINGS
+        fi
+        
+        echo "=== Files created successfully ==="
+        ls -la app/
+        ls -la app/src/main/
+    
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
@@ -22,85 +192,32 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v4
     
-    - name: Auto-create missing files
-      run: |
-        # Create settings.gradle.kts if missing
-        if [ ! -f "settings.gradle.kts" ]; then
-          echo "Creating settings.gradle.kts..."
-          cat > settings.gradle.kts << 'EOF'
-        pluginManagement {
-            repositories {
-                google()
-                mavenCentral()
-                gradlePluginPortal()
-            }
-        }
-        dependencyResolutionManagement {
-            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-            repositories {
-                google()
-                mavenCentral()
-            }
-        }
-        rootProject.name = "CarMonitor"
-        include(":app")
-        EOF
-        fi
-        
-        # Create build.gradle.kts if missing
-        if [ ! -f "build.gradle.kts" ]; then
-          echo "Creating build.gradle.kts..."
-          cat > build.gradle.kts << 'EOF'
-        plugins {
-            id("com.android.application") version "8.1.0" apply false
-            id("org.jetbrains.kotlin.android") version "1.9.0" apply false
-        }
-        EOF
-        fi
-        
-        # Create gradle.properties if missing
-        if [ ! -f "gradle.properties" ]; then
-          echo "Creating gradle.properties..."
-          cat > gradle.properties << 'EOF'
-        org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
-        android.useAndroidX=true
-        android.nonTransitiveRClass=true
-        EOF
-        fi
-        
-        # Create gradle wrapper properties
-        mkdir -p gradle/wrapper
-        cat > gradle/wrapper/gradle-wrapper.properties << 'EOF'
-        distributionBase=GRADLE_USER_HOME
-        distributionPath=wrapper/dists
-        distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-bin.zip
-        zipStoreBase=GRADLE_USER_HOME
-        zipStorePath=wrapper/dists
-        EOF
-        
-        echo "=== Project structure ==="
-        ls -la
+    - name: Accept Android licenses
+      run: yes | sdkmanager --licenses || true
     
-    - name: Install Gradle
-      run: |
-        wget -q https://services.gradle.org/distributions/gradle-8.2-bin.zip
-        unzip -q gradle-8.2-bin.zip
-        export PATH=$PWD/gradle-8.2/bin:$PATH
-        gradle --version
-        gradle wrapper
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: '8.2'
+    
+    - name: Create Gradle Wrapper
+      run: gradle wrapper --gradle-version 8.2
     
     - name: Make gradlew executable
       run: chmod +x gradlew
     
+    - name: List available tasks
+      run: ./gradlew tasks --all
+    
     - name: Build APK
-      run: ./gradlew assembleRelease --stacktrace || ./gradlew assembleDebug --stacktrace
+      run: ./gradlew :app:assembleRelease --stacktrace
+    
+    - name: Find APK
+      run: find . -name "*.apk" -type f
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
-      if: always()
       with:
         name: CarMonitor-APK
-        path: |
-          app/build/outputs/apk/release/*.apk
-          app/build/outputs/apk/debug/*.apk
-        if-no-files-found: warn
+        path: app/build/outputs/apk/**/*.apk
+        if-no-files-found: error
