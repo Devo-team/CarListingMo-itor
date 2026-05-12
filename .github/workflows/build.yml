@@ -11,7 +11,7 @@ jobs:
  - uses: actions/checkout@v3 
 
  - name: Create project structure 
- run: | 
+ run: 
  mkdir -p app/src/main/java/com/carmonitor/app 
  mkdir -p app/src/main/res/values 
  mkdir -p .github/workflows 
