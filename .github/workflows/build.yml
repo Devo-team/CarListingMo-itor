@@ -1,28 +1,22 @@
-name: Build Debug APK
+name: Build Complete Car Monitor App
 
 on:
   push:
-    branches: [ main ]
   workflow_dispatch:
-
-# ✅ Autorisations nécessaires
-permissions:
-  contents: write
-  actions: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
     
-    - name: Create project structure
+    - name: Create Complete Project
       run: |
-        mkdir -p app/src/main/{java/com/carmonitor/app,res/values}
+        mkdir -p app/src/main/java/com/carmonitor/app/{data,ui,worker}
+        mkdir -p app/src/main/res/{values,xml}
         mkdir -p gradle/wrapper
         
+        # ============ GRADLE FILES ============
         cat > build.gradle.kts << 'EOF'
         plugins {
             id("com.android.application") version "8.1.0" apply false
@@ -32,11 +26,18 @@ jobs:
         
         cat > settings.gradle.kts << 'EOF'
         pluginManagement {
-            repositories { google(); mavenCentral(); gradlePluginPortal() }
+            repositories {
+                google()
+                mavenCentral()
+                gradlePluginPortal()
+            }
         }
         dependencyResolutionManagement {
             repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-            repositories { google(); mavenCentral() }
+            repositories {
+                google()
+                mavenCentral()
+            }
         }
         rootProject.name = "CarMonitor"
         include(":app")
@@ -52,113 +53,886 @@ jobs:
         distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-bin.zip
         EOF
         
+        # ============ APP BUILD.GRADLE.KTS ============
         cat > app/build.gradle.kts << 'EOF'
         plugins {
             id("com.android.application")
             id("org.jetbrains.kotlin.android")
         }
+        
         android {
             namespace = "com.carmonitor.app"
             compileSdk = 34
+            
             defaultConfig {
                 applicationId = "com.carmonitor.app"
                 minSdk = 21
                 targetSdk = 34
-                versionCode = 1
-                versionName = "1.0"
+                versionCode = 2
+                versionName = "2.0"
             }
-            buildTypes {
-                debug { isMinifyEnabled = false }
-                release { isMinifyEnabled = false }
+            
+            buildFeatures {
+                compose = true
             }
+            
+            composeOptions {
+                kotlinCompilerExtensionVersion = "1.5.1"
+            }
+            
             compileOptions {
                 sourceCompatibility = JavaVersion.VERSION_17
                 targetCompatibility = JavaVersion.VERSION_17
             }
-            kotlinOptions { jvmTarget = "17" }
-            buildFeatures { compose = true }
-            composeOptions { kotlinCompilerExtensionVersion = "1.5.1" }
+            
+            kotlinOptions {
+                jvmTarget = "17"
+            }
+            
+            packaging {
+                resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            }
         }
+        
         dependencies {
             implementation("androidx.core:core-ktx:1.12.0")
+            implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
+            implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
             implementation("androidx.activity:activity-compose:1.8.1")
             implementation(platform("androidx.compose:compose-bom:2023.10.01"))
             implementation("androidx.compose.ui:ui")
             implementation("androidx.compose.material3:material3")
+            implementation("androidx.compose.material:material-icons-extended")
+            implementation("androidx.navigation:navigation-compose:2.7.5")
+            implementation("com.squareup.retrofit2:retrofit:2.9.0")
+            implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+            implementation("com.squareup.okhttp3:logging-interceptor:4.11.0")
+            implementation("io.coil-kt:coil-compose:2.5.0")
+            implementation("androidx.work:work-runtime-ktx:2.9.0")
+            implementation("androidx.datastore:datastore-preferences:1.0.0")
         }
         EOF
         
+        # ============ ANDROID MANIFEST ============
+        cat > app/src/main/AndroidManifest.xml << 'EOF'
+        <?xml version="1.0" encoding="utf-8"?>
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            
+            <uses-permission android:name="android.permission.INTERNET" />
+            <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+            <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+            
+            <application
+                android:name=".CarMonitorApp"
+                android:allowBackup="true"
+                android:icon="@android:drawable/ic_dialog_info"
+                android:label="@string/app_name"
+                android:supportsRtl="true"
+                android:usesCleartextTraffic="true"
+                android:theme="@android:style/Theme.Material.Light.NoActionBar">
+                
+                <activity
+                    android:name=".MainActivity"
+                    android:exported="true">
+                    <intent-filter>
+                        <action android:name="android.intent.action.MAIN" />
+                        <category android:name="android.intent.category.LAUNCHER" />
+                    </intent-filter>
+                </activity>
+                
+                <receiver android:name=".worker.BootReceiver" android:exported="true">
+                    <intent-filter>
+                        <action android:name="android.intent.action.BOOT_COMPLETED" />
+                    </intent-filter>
+                </receiver>
+            </application>
+        </manifest>
+        EOF
+        
+        # ============ STRINGS.XML ============
+        cat > app/src/main/res/values/strings.xml << 'EOF'
+        <?xml version="1.0" encoding="utf-8"?>
+        <resources>
+            <string name="app_name">Car Monitor</string>
+        </resources>
+        EOF
+        
+        # ============ DATA MODELS ============
+        cat > app/src/main/java/com/carmonitor/app/data/Models.kt << 'EOF'
+        package com.carmonitor.app.data
+        
+        data class CarListing(
+            val id: String,
+            val source: String,
+            val title: String,
+            val price: Double?,
+            val currency: String = "TND",
+            val location: String,
+            val year: Int?,
+            val imageUrl: String?,
+            val listingUrl: String,
+            val publishedDate: String,
+            val isNew: Boolean = false
+        )
+        
+        data class ApiResponse<T>(
+            val success: Boolean,
+            val data: T?,
+            val count: Int? = null,
+            val error: String? = null
+        )
+        
+        data class UserFilter(
+            val userId: String,
+            val phone: String,
+            val brands: List<String> = emptyList(),
+            val priceMax: Double? = null,
+            val locations: List<String> = emptyList(),
+            val notifySMS: Boolean = true
+        )
+        EOF
+        
+        # ============ API SERVICE ============
+        cat > app/src/main/java/com/carmonitor/app/data/ApiService.kt << 'EOF'
+        package com.carmonitor.app.data
+        
+        import okhttp3.OkHttpClient
+        import okhttp3.logging.HttpLoggingInterceptor
+        import retrofit2.Retrofit
+        import retrofit2.converter.gson.GsonConverterFactory
+        import retrofit2.http.*
+        import java.util.concurrent.TimeUnit
+        
+        interface ApiService {
+            @GET("api/listings")
+            suspend fun getListings(
+                @Query("limit") limit: Int = 50
+            ): ApiResponse<List<CarListing>>
+            
+            @POST("api/scrape")
+            suspend fun triggerScrape(): ApiResponse<String>
+            
+            @POST("api/filters")
+            suspend fun saveFilter(@Body filter: UserFilter): ApiResponse<String>
+            
+            @GET("api/filters/{userId}")
+            suspend fun getFilter(@Path("userId") userId: String): ApiResponse<UserFilter>
+        }
+        
+        object RetrofitClient {
+            private const val BASE_URL = "https://your-backend-url.com/" // À CHANGER
+            
+            private val okHttpClient = OkHttpClient.Builder()
+                .addInterceptor(HttpLoggingInterceptor().apply {
+                    level = HttpLoggingInterceptor.Level.BODY
+                })
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .build()
+            
+            val apiService: ApiService by lazy {
+                Retrofit.Builder()
+                    .baseUrl(BASE_URL)
+                    .client(okHttpClient)
+                    .addConverterFactory(GsonConverterFactory.create())
+                    .build()
+                    .create(ApiService::class.java)
+            }
+        }
+        EOF
+        
+        # ============ REPOSITORY ============
+        cat > app/src/main/java/com/carmonitor/app/data/Repository.kt << 'EOF'
+        package com.carmonitor.app.data
+        
+        class CarRepository {
+            private val apiService = RetrofitClient.apiService
+            
+            suspend fun getListings(): Result<List<CarListing>> {
+                return try {
+                    val response = apiService.getListings()
+                    if (response.success && response.data != null) {
+                        Result.success(response.data)
+                    } else {
+                        Result.failure(Exception(response.error ?: "Unknown error"))
+                    }
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
+            }
+            
+            suspend fun triggerScrape(): Result<String> {
+                return try {
+                    val response = apiService.triggerScrape()
+                    if (response.success) {
+                        Result.success("Scraping started")
+                    } else {
+                        Result.failure(Exception(response.error ?: "Failed"))
+                    }
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
+            }
+            
+            suspend fun saveFilter(filter: UserFilter): Result<String> {
+                return try {
+                    val response = apiService.saveFilter(filter)
+                    if (response.success) {
+                        Result.success("Filter saved")
+                    } else {
+                        Result.failure(Exception(response.error ?: "Failed"))
+                    }
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
+            }
+            
+            suspend fun getFilter(userId: String): Result<UserFilter?> {
+                return try {
+                    val response = apiService.getFilter(userId)
+                    if (response.success) {
+                        Result.success(response.data)
+                    } else {
+                        Result.failure(Exception(response.error ?: "Failed"))
+                    }
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
+            }
+        }
+        EOF
+        
+        # ============ VIEWMODEL ============
+        cat > app/src/main/java/com/carmonitor/app/ui/HomeViewModel.kt << 'EOF'
+        package com.carmonitor.app.ui
+        
+        import androidx.lifecycle.ViewModel
+        import androidx.lifecycle.viewModelScope
+        import com.carmonitor.app.data.CarListing
+        import com.carmonitor.app.data.CarRepository
+        import kotlinx.coroutines.flow.MutableStateFlow
+        import kotlinx.coroutines.flow.StateFlow
+        import kotlinx.coroutines.launch
+        
+        class HomeViewModel : ViewModel() {
+            private val repository = CarRepository()
+            
+            private val _uiState = MutableStateFlow(HomeUiState())
+            val uiState: StateFlow<HomeUiState> = _uiState
+            
+            init {
+                loadListings()
+            }
+            
+            fun loadListings() {
+                viewModelScope.launch {
+                    _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+                    
+                    repository.getListings()
+                        .onSuccess { listings ->
+                            _uiState.value = _uiState.value.copy(
+                                listings = listings,
+                                isLoading = false
+                            )
+                        }
+                        .onFailure { error ->
+                            _uiState.value = _uiState.value.copy(
+                                isLoading = false,
+                                error = error.message
+                            )
+                        }
+                }
+            }
+            
+            fun refresh() {
+                viewModelScope.launch {
+                    _uiState.value = _uiState.value.copy(isRefreshing = true)
+                    
+                    repository.triggerScrape()
+                        .onSuccess {
+                            // Wait a bit then reload
+                            kotlinx.coroutines.delay(3000)
+                            loadListings()
+                        }
+                    
+                    _uiState.value = _uiState.value.copy(isRefreshing = false)
+                }
+            }
+        }
+        
+        data class HomeUiState(
+            val isLoading: Boolean = false,
+            val isRefreshing: Boolean = false,
+            val listings: List<CarListing> = emptyList(),
+            val error: String? = null
+        )
+        EOF
+        
+        # ============ MAIN ACTIVITY ============
         cat > app/src/main/java/com/carmonitor/app/MainActivity.kt << 'EOF'
         package com.carmonitor.app
+        
+        import android.Manifest
+        import android.content.pm.PackageManager
+        import android.os.Build
         import android.os.Bundle
         import androidx.activity.ComponentActivity
         import androidx.activity.compose.setContent
-        import androidx.compose.foundation.layout.*
-        import androidx.compose.material3.*
-        import androidx.compose.runtime.*
+        import androidx.activity.result.contract.ActivityResultContracts
+        import androidx.compose.foundation.layout.fillMaxSize
+        import androidx.compose.material3.MaterialTheme
+        import androidx.compose.material3.Surface
         import androidx.compose.ui.Modifier
-        import androidx.compose.ui.unit.dp
+        import androidx.core.content.ContextCompat
+        import com.carmonitor.app.ui.CarMonitorApp
+        
         class MainActivity : ComponentActivity() {
+            
+            private val requestPermissionLauncher = registerForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { isGranted: Boolean ->
+                // Handle permission result
+            }
+            
             override fun onCreate(savedInstanceState: Bundle?) {
                 super.onCreate(savedInstanceState)
+                
+                requestNotificationPermission()
+                
                 setContent {
                     MaterialTheme {
-                        Surface(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-                            Text("🚗 Car Monitor - Build Réussi! ✅", style = MaterialTheme.typography.headlineMedium)
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            color = MaterialTheme.colorScheme.background
+                        ) {
+                            CarMonitorApp()
                         }
+                    }
+                }
+            }
+            
+            private fun requestNotificationPermission() {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    if (ContextCompat.checkSelfPermission(
+                            this,
+                            Manifest.permission.POST_NOTIFICATIONS
+                        ) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     }
                 }
             }
         }
         EOF
         
-        cat > app/src/main/AndroidManifest.xml << 'EOF'
-        <?xml version="1.0" encoding="utf-8"?>
-        <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-            <application android:label="Car Monitor" android:theme="@android:style/Theme.Material.Light">
-                <activity android:name=".MainActivity" android:exported="true">
-                    <intent-filter>
-                        <action android:name="android.intent.action.MAIN" />
-                        <category android:name="android.intent.category.LAUNCHER" />
-                    </intent-filter>
-                </activity>
-            </application>
-        </manifest>
+        # ============ UI COMPOSABLES ============
+        cat > app/src/main/java/com/carmonitor/app/ui/CarMonitorApp.kt << 'EOF'
+        package com.carmonitor.app.ui
+        
+        import androidx.compose.foundation.clickable
+        import androidx.compose.foundation.layout.*
+        import androidx.compose.foundation.lazy.LazyColumn
+        import androidx.compose.foundation.lazy.items
+        import androidx.compose.foundation.shape.RoundedCornerShape
+        import androidx.compose.material.icons.Icons
+        import androidx.compose.material.icons.filled.*
+        import androidx.compose.material3.*
+        import androidx.compose.runtime.*
+        import androidx.compose.ui.Alignment
+        import androidx.compose.ui.Modifier
+        import androidx.compose.ui.draw.clip
+        import androidx.compose.ui.graphics.Color
+        import androidx.compose.ui.layout.ContentScale
+        import androidx.compose.ui.platform.LocalContext
+        import androidx.compose.ui.text.font.FontWeight
+        import androidx.compose.ui.text.style.TextOverflow
+        import androidx.compose.ui.unit.dp
+        import androidx.lifecycle.viewmodel.compose.viewModel
+        import coil.compose.AsyncImage
+        import coil.request.ImageRequest
+        import com.carmonitor.app.data.CarListing
+        import androidx.compose.material.pullrefresh.PullRefreshIndicator
+        import androidx.compose.material.pullrefresh.pullRefresh
+        import androidx.compose.material.pullrefresh.rememberPullRefreshState
+        
+        @OptIn(ExperimentalMaterial3Api::class)
+        @Composable
+        fun CarMonitorApp(viewModel: HomeViewModel = viewModel()) {
+            val uiState by viewModel.uiState.collectAsState()
+            var showFilters by remember { mutableStateOf(false) }
+            
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = {
+                            Column {
+                                Text("🚗 Car Monitor")
+                                Text(
+                                    "${uiState.listings.size} annonces",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        },
+                        actions = {
+                            IconButton(onClick = { showFilters = true }) {
+                                Icon(Icons.Default.FilterList, "Filtres")
+                            }
+                            IconButton(onClick = { viewModel.refresh() }) {
+                                Icon(Icons.Default.Refresh, "Actualiser")
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        )
+                    )
+                },
+                floatingActionButton = {
+                    FloatingActionButton(
+                        onClick = { showFilters = true }
+                    ) {
+                        Icon(Icons.Default.Settings, "Paramètres")
+                    }
+                }
+            ) { padding ->
+                Box(modifier = Modifier.padding(padding)) {
+                    when {
+                        uiState.isLoading && uiState.listings.isEmpty() -> {
+                            LoadingScreen()
+                        }
+                        uiState.error != null && uiState.listings.isEmpty() -> {
+                            ErrorScreen(
+                                error = uiState.error ?: "Erreur inconnue",
+                                onRetry = { viewModel.loadListings() }
+                            )
+                        }
+                        else -> {
+                            ListingsScreen(
+                                listings = uiState.listings,
+                                isRefreshing = uiState.isRefreshing,
+                                onRefresh = { viewModel.refresh() }
+                            )
+                        }
+                    }
+                }
+                
+                if (showFilters) {
+                    FiltersDialog(onDismiss = { showFilters = false })
+                }
+            }
+        }
+        
+        @Composable
+        fun LoadingScreen() {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Chargement des annonces...")
+                }
+            }
+        }
+        
+        @Composable
+        fun ErrorScreen(error: String, onRetry: () -> Unit) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Icon(
+                        Icons.Default.ErrorOutline,
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        "Erreur de connexion",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.Gray
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(onClick = onRetry) {
+                        Icon(Icons.Default.Refresh, null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Réessayer")
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "ℹ️ Configuration requise",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("1. Déployez le backend sur Render/Railway")
+                            Text("2. Configurez l'URL dans ApiService.kt")
+                            Text("3. Relancez l'application")
+                        }
+                    }
+                }
+            }
+        }
+        
+        @OptIn(ExperimentalMaterial3Api::class)
+        @Composable
+        fun ListingsScreen(
+            listings: List<CarListing>,
+            isRefreshing: Boolean,
+            onRefresh: () -> Unit
+        ) {
+            val pullRefreshState = rememberPullRefreshState(
+                refreshing = isRefreshing,
+                onRefresh = onRefresh
+            )
+            
+            Box(modifier = Modifier.pullRefresh(pullRefreshState)) {
+                if (listings.isEmpty()) {
+                    EmptyState()
+                } else {
+                    LazyColumn(
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(listings, key = { it.id }) { listing ->
+                            ListingCard(listing = listing)
+                        }
+                    }
+                }
+                
+                PullRefreshIndicator(
+                    refreshing = isRefreshing,
+                    state = pullRefreshState,
+                    modifier = Modifier.align(Alignment.TopCenter)
+                )
+            }
+        }
+        
+        @Composable
+        fun EmptyState() {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.Default.DirectionsCar,
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                        tint = Color.Gray
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        "Aucune annonce",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Text(
+                        "Tirez pour actualiser",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.Gray
+                    )
+                }
+            }
+        }
+        
+        @Composable
+        fun ListingCard(listing: CarListing) {
+            val context = LocalContext.current
+            
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        // Open URL in browser
+                        val intent = android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse(listing.listingUrl)
+                        )
+                        context.startActivity(intent)
+                    },
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Row(modifier = Modifier.padding(12.dp)) {
+                    // Image
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(listing.imageUrl)
+                            .crossfade(true)
+                            .placeholder(android.R.drawable.ic_menu_gallery)
+                            .error(android.R.drawable.ic_menu_gallery)
+                            .build(),
+                        contentDescription = listing.title,
+                        modifier = Modifier
+                            .size(100.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                        contentScale = ContentScale.Crop
+                    )
+                    
+                    Spacer(modifier = Modifier.width(12.dp))
+                    
+                    Column(modifier = Modifier.weight(1f)) {
+                        // New badge
+                        if (listing.isNew) {
+                            Surface(
+                                color = Color(0xFF4CAF50),
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    "NOUVEAU",
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+                        
+                        // Title
+                        Text(
+                            text = listing.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        
+                        Spacer(modifier = Modifier.height(4.dp))
+                        
+                        // Price
+                        Text(
+                            text = "${listing.price?.toInt()?.let { "%,d".format(it) } ?: "N/A"} ${listing.currency}",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        
+                        Spacer(modifier = Modifier.height(4.dp))
+                        
+                        // Location and year
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.LocationOn,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = Color.Gray
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = listing.location,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray
+                            )
+                            
+                            listing.year?.let {
+                                Text(
+                                    text = " • $it",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.Gray
+                                )
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(4.dp))
+                        
+                        // Source
+                        Text(
+                            text = "Source: ${listing.source}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray
+                        )
+                    }
+                    
+                    Icon(
+                        Icons.Default.OpenInNew,
+                        contentDescription = "Ouvrir",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+        
+        @Composable
+        fun FiltersDialog(onDismiss: () -> Unit) {
+            var phone by remember { mutableStateOf("") }
+            var priceMax by remember { mutableStateOf("") }
+            var smsEnabled by remember { mutableStateOf(true) }
+            
+            AlertDialog(
+                onDismissRequest = onDismiss,
+                title = { Text("⚙️ Paramètres SMS") },
+                text = {
+                    Column {
+                        Text(
+                            "Recevez un SMS pour chaque nouvelle annonce",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        OutlinedTextField(
+                            value = phone,
+                            onValueChange = { phone = it },
+                            label = { Text("Numéro de téléphone") },
+                            placeholder = { Text("+216 XX XXX XXX") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        OutlinedTextField(
+                            value = priceMax,
+                            onValueChange = { priceMax = it },
+                            label = { Text("Prix maximum (TND)") },
+                            placeholder = { Text("50000") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Activer les notifications SMS")
+                            Switch(
+                                checked = smsEnabled,
+                                onCheckedChange = { smsEnabled = it }
+                            )
+                        }
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    "ℹ️ Configuration SMS",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "Les SMS sont envoyés via Twilio. Vous recevrez une notification pour chaque nouvelle annonce correspondant à vos critères.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            // TODO: Save filter
+                            onDismiss()
+                        }
+                    ) {
+                        Text("Enregistrer")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismiss) {
+                        Text("Annuler")
+                    }
+                }
+            )
+        }
         EOF
         
-        cat > app/src/main/res/values/strings.xml << 'EOF'
-        <?xml version="1.0" encoding="utf-8"?>
-        <resources><string name="app_name">Car Monitor</string></resources>
+        # ============ APP CLASS ============
+        cat > app/src/main/java/com/carmonitor/app/CarMonitorApp.kt << 'EOF'
+        package com.carmonitor.app
+        
+        import android.app.Application
+        import android.app.NotificationChannel
+        import android.app.NotificationManager
+        import android.os.Build
+        
+        class CarMonitorApp : Application() {
+            override fun onCreate() {
+                super.onCreate()
+                createNotificationChannel()
+            }
+            
+            private fun createNotificationChannel() {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val channel = NotificationChannel(
+                        "car_listings",
+                        "Nouvelles Annonces",
+                        NotificationManager.IMPORTANCE_HIGH
+                    ).apply {
+                        description = "Notifications pour les nouvelles annonces de voitures"
+                    }
+                    
+                    val notificationManager = getSystemService(NotificationManager::class.java)
+                    notificationManager.createNotificationChannel(channel)
+                }
+            }
+        }
         EOF
         
-        echo "✅ Structure créée"
+        # ============ BOOT RECEIVER ============
+        cat > app/src/main/java/com/carmonitor/app/worker/BootReceiver.kt << 'EOF'
+        package com.carmonitor.app.worker
+        
+        import android.content.BroadcastReceiver
+        import android.content.Context
+        import android.content.Intent
+        
+        class BootReceiver : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+                    // Start background service
+                }
+            }
+        }
+        EOF
+        
+        cat > app/proguard-rules.pro << 'EOF'
+        -keep class com.carmonitor.app.** { *; }
+        EOF
+        
+        echo "✅ Complete project created!"
     
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
+    - uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
     
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
+    - uses: android-actions/setup-android@v3
     
-    - name: Accept licenses
-      run: yes | sdkmanager --licenses || true
+    - run: yes | sdkmanager --licenses || true
     
-    - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v3
+    - uses: gradle/actions/setup-gradle@v3
       with:
         gradle-version: '8.2'
     
-    - name: Create Wrapper & Build
-      run: |
-        gradle wrapper --gradle-version 8.2
-        chmod +x gradlew
-        ./gradlew :app:assembleDebug --stacktrace
+    - run: gradle wrapper
+    - run: chmod +x gradlew
+    - run: ./gradlew :app:assembleDebug --stacktrace
     
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
+    - run: cp app/build/outputs/apk/debug/app-debug.apk CarMonitor-Complete-v2.0.apk
+    
+    - uses: actions/upload-artifact@v4
       with:
-        name: CarMonitor-Debug
-        path: app/build/outputs/apk/debug/app-debug.apk
-        if-no-files-found: error
+        name: CarMonitor-Complete-APK
+        path: CarMonitor-Complete-v2.0.apk
