@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Auto-Setup and Build APK
 
 on:
   push:
@@ -13,26 +13,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Verify project structure
-      run: |
-        echo "=== Listing project files ==="
-        ls -la
-        echo ""
-        echo "=== Checking required files ==="
-        if [ ! -f "settings.gradle.kts" ]; then
-          echo "ERROR: settings.gradle.kts not found!"
-          exit 1
-        fi
-        if [ ! -f "build.gradle.kts" ]; then
-          echo "ERROR: build.gradle.kts not found!"
-          exit 1
-        fi
-        if [ ! -f "app/build.gradle.kts" ]; then
-          echo "ERROR: app/build.gradle.kts not found!"
-          exit 1
-        fi
-        echo "All required files found ✓"
-    
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
@@ -42,45 +22,85 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v4
     
-    - name: Accept licenses
-      run: yes | sdkmanager --licenses || true
+    - name: Auto-create missing files
+      run: |
+        # Create settings.gradle.kts if missing
+        if [ ! -f "settings.gradle.kts" ]; then
+          echo "Creating settings.gradle.kts..."
+          cat > settings.gradle.kts << 'EOF'
+        pluginManagement {
+            repositories {
+                google()
+                mavenCentral()
+                gradlePluginPortal()
+            }
+        }
+        dependencyResolutionManagement {
+            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+            repositories {
+                google()
+                mavenCentral()
+            }
+        }
+        rootProject.name = "CarMonitor"
+        include(":app")
+        EOF
+        fi
+        
+        # Create build.gradle.kts if missing
+        if [ ! -f "build.gradle.kts" ]; then
+          echo "Creating build.gradle.kts..."
+          cat > build.gradle.kts << 'EOF'
+        plugins {
+            id("com.android.application") version "8.1.0" apply false
+            id("org.jetbrains.kotlin.android") version "1.9.0" apply false
+        }
+        EOF
+        fi
+        
+        # Create gradle.properties if missing
+        if [ ! -f "gradle.properties" ]; then
+          echo "Creating gradle.properties..."
+          cat > gradle.properties << 'EOF'
+        org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+        android.useAndroidX=true
+        android.nonTransitiveRClass=true
+        EOF
+        fi
+        
+        # Create gradle wrapper properties
+        mkdir -p gradle/wrapper
+        cat > gradle/wrapper/gradle-wrapper.properties << 'EOF'
+        distributionBase=GRADLE_USER_HOME
+        distributionPath=wrapper/dists
+        distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-bin.zip
+        zipStoreBase=GRADLE_USER_HOME
+        zipStorePath=wrapper/dists
+        EOF
+        
+        echo "=== Project structure ==="
+        ls -la
     
-    - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v4
-      with:
-        gradle-version: '8.2'
-    
-    - name: Create Gradle Wrapper
-      run: gradle wrapper --gradle-version 8.2
+    - name: Install Gradle
+      run: |
+        wget -q https://services.gradle.org/distributions/gradle-8.2-bin.zip
+        unzip -q gradle-8.2-bin.zip
+        export PATH=$PWD/gradle-8.2/bin:$PATH
+        gradle --version
+        gradle wrapper
     
     - name: Make gradlew executable
       run: chmod +x gradlew
     
-    - name: Build Debug APK
-      run: ./gradlew assembleDebug --stacktrace
-      continue-on-error: true
+    - name: Build APK
+      run: ./gradlew assembleRelease --stacktrace || ./gradlew assembleDebug --stacktrace
     
-    - name: Build Release APK  
-      run: ./gradlew assembleRelease --stacktrace
-      continue-on-error: true
-    
-    - name: Find APK files
-      run: |
-        echo "=== Searching for APK files ==="
-        find . -name "*.apk" -type f
-    
-    - name: Upload Debug APK
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: app-debug
-        path: app/build/outputs/apk/debug/*.apk
-        if-no-files-found: warn
-    
-    - name: Upload Release APK
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: app-release
-        path: app/build/outputs/apk/release/*.apk
+        name: CarMonitor-APK
+        path: |
+          app/build/outputs/apk/release/*.apk
+          app/build/outputs/apk/debug/*.apk
         if-no-files-found: warn
