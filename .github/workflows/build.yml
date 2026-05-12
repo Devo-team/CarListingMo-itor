@@ -17,7 +17,7 @@ jobs:
  mkdir -p .github/workflows 
 
  - name: Create build files 
- run: | 
+ run:  
  cat > settings.gradle.kts << 'EOF' 
  pluginManagement { 
  repositories { 
@@ -67,7 +67,7 @@ jobs:
  uses: android-actions/setup-android@v2 
 
  - name: Build APK 
- run: | 
+ run:  
  chmod +x gradlew 
  ./gradlew assembleRelease || ./gradlew assembleDebug 
 
@@ -75,6 +75,6 @@ jobs:
  uses: actions/upload-artifact@v3 
  with: 
  name: CarMonitor-APK 
- path: | 
+ path:  
  app/build/outputs/apk/release/*.apk 
  app/build/outputs/apk/debug/*.apk
