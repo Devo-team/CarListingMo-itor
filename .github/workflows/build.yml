@@ -1,0 +1,80 @@
+name: Build Android APK 
+
+on: 
+ push: 
+ workflow_dispatch: 
+
+jobs: 
+ build: 
+ runs-on: ubuntu-latest 
+ steps: 
+ - uses: actions/checkout@v3 
+
+ - name: Create project structure 
+ run: | 
+ mkdir -p app/src/main/java/com/carmonitor/app 
+ mkdir -p app/src/main/res/values 
+ mkdir -p .github/workflows 
+
+ - name: Create build files 
+ run: | 
+ cat > settings.gradle.kts << 'EOF' 
+ pluginManagement { 
+ repositories { 
+ google() 
+ mavenCentral() 
+ gradlePluginPortal() 
+ } 
+ } 
+ dependencyResolutionManagement { 
+ repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS) 
+ repositories { 
+ google() 
+ mavenCentral() 
+ } 
+ } 
+ rootProject.name = "CarMonitor" 
+ include(":app") 
+ EOF 
+
+ cat > build.gradle.kts << 'EOF' 
+ plugins { 
+ id("com.android.application") version "8.2.0" apply false 
+ id("org.jetbrains.kotlin.android") version "1.9.20" apply false 
+ } 
+ EOF 
+
+ cat > gradle.properties << 'EOF' 
+ org.gradle.jvmargs=-Xmx2048m 
+ android.useAndroidX=true 
+ android.nonTransitiveRClass=true 
+ EOF 
+
+ - name: Setup Gradle 
+ run: | 
+ wget https://services.gradle.org/distributions/gradle-8.2-bin.zip 
+ unzip -q gradle-8.2-bin.zip 
+ export PATH=$PATH:$PWD/gradle-8.2/bin 
+ gradle wrapper 
+
+ - name: Set up JDK 
+ uses: actions/setup-java@v3 
+ with: 
+ java-version: '17' 
+ distribution: 'temurin' 
+
+ - name: Setup Android SDK 
+ uses: android-actions/setup-android@v2 
+
+ - name: Build APK 
+ run: | 
+ chmod +x gradlew 
+ ./gradlew assembleRelease || ./gradlew assembleDebug 
+
+ - name: Upload APK 
+ uses: actions/upload-artifact@v3 
+ with: 
+ name: CarMonitor-APK 
+ path: | 
+ app/build/outputs/apk/release/*.apk 
+ app/build/outputs/apk/debug/*.apk
