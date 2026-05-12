@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout
+    - name: Checkout code
       uses: actions/checkout@v4
     
     - name: Set up JDK 17
@@ -22,22 +22,18 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v4
     
+    - name: Create gradle wrapper
+      run: |
+        gradle wrapper --gradle-version 8.2
+    
     - name: Make gradlew executable
       run: chmod +x gradlew
     
-    - name: Build APK
-      run: ./gradlew assembleRelease --stacktrace
+    - name: Build APK with Gradle
+      run: ./gradlew assembleRelease --stacktrace --info
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: CarMonitor-APK
-        path: app/build/outputs/apk/release/app-release.apk
-    
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      if: startsWith(github.ref, 'refs/tags/')
-      with:
-        files: app/build/outputs/apk/release/app-release.apk
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        path: app/build/outputs/apk/release/*.apk
