@@ -1,4 +1,4 @@
-name: Build Car Monitor - FIXED
+name: Build Car Monitor - STANDALONE
 
 on:
   push:
@@ -10,13 +10,12 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Create Complete Android Project
+    - name: Create Standalone Android App
       run: |
-        mkdir -p app/src/main/java/com/carmonitor/app/{data,ui,worker}
+        mkdir -p app/src/main/java/com/carmonitor/app/{data,ui}
         mkdir -p app/src/main/res/values
         mkdir -p gradle/wrapper
         
-        # Gradle files
         cat > build.gradle.kts << 'EOF'
         plugins {
             id("com.android.application") version "8.2.0" apply false
@@ -54,7 +53,6 @@ jobs:
         distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-bin.zip
         EOF
         
-        # app/build.gradle.kts
         cat > app/build.gradle.kts << 'EOF'
         plugins {
             id("com.android.application")
@@ -69,8 +67,8 @@ jobs:
                 applicationId = "com.carmonitor.app"
                 minSdk = 21
                 targetSdk = 34
-                versionCode = 2
-                versionName = "2.0"
+                versionCode = 3
+                versionName = "3.0"
             }
             
             buildFeatures {
@@ -104,23 +102,18 @@ jobs:
             implementation("androidx.compose.ui:ui")
             implementation("androidx.compose.material3:material3")
             implementation("androidx.compose.material:material-icons-extended")
-            implementation("com.squareup.retrofit2:retrofit:2.9.0")
-            implementation("com.squareup.retrofit2:converter-gson:2.9.0")
             implementation("io.coil-kt:coil-compose:2.5.0")
         }
         EOF
         
-        # AndroidManifest.xml
         cat > app/src/main/AndroidManifest.xml << 'EOF'
         <?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
             <uses-permission android:name="android.permission.INTERNET" />
             <application
-                android:name=".CarMonitorApp"
                 android:allowBackup="true"
                 android:icon="@android:drawable/ic_dialog_info"
                 android:label="@string/app_name"
-                android:usesCleartextTraffic="true"
                 android:theme="@android:style/Theme.Material.Light.NoActionBar">
                 <activity
                     android:name=".MainActivity"
@@ -140,99 +133,104 @@ jobs:
         </resources>
         EOF
         
-        # Data Models
         cat > app/src/main/java/com/carmonitor/app/data/Models.kt << 'EOF'
         package com.carmonitor.app.data
+        
+        import kotlin.random.Random
         
         data class CarListing(
             val id: String,
             val source: String,
             val title: String,
-            val price: Double?,
+            val price: Double,
             val currency: String = "TND",
             val location: String,
-            val year: Int?,
+            val year: Int,
             val imageUrl: String?,
             val listingUrl: String,
             val publishedDate: String,
             val isNew: Boolean = false
         )
         
-        data class ApiResponse<T>(
-            val success: Boolean,
-            val data: T?,
-            val count: Int? = null,
-            val error: String? = null
-        )
-        EOF
-        
-        # API Service
-        cat > app/src/main/java/com/carmonitor/app/data/ApiService.kt << 'EOF'
-        package com.carmonitor.app.data
-        
-        import retrofit2.Retrofit
-        import retrofit2.converter.gson.GsonConverterFactory
-        import retrofit2.http.GET
-        import retrofit2.http.POST
-        import retrofit2.http.Query
-        
-        interface ApiService {
-            @GET("api/listings")
-            suspend fun getListings(@Query("limit") limit: Int = 50): ApiResponse<List<CarListing>>
+        object FakeDataGenerator {
+            private val brands = listOf("Renault", "Peugeot", "Citroën", "Mercedes", "BMW", "Audi", "Volkswagen", "Toyota", "Hyundai", "Kia", "Fiat", "Seat")
+            private val models = mapOf(
+                "Renault" to listOf("Clio 4", "Megane", "Symbol", "Duster"),
+                "Peugeot" to listOf("208", "308", "2008", "3008"),
+                "Citroën" to listOf("C3", "C4", "C-Elysée", "Berlingo"),
+                "Mercedes" to listOf("C200", "E220", "A180", "GLA"),
+                "BMW" to listOf("Serie 3", "Serie 5", "X1", "X3"),
+                "Audi" to listOf("A3", "A4", "Q3", "Q5"),
+                "Volkswagen" to listOf("Golf 7", "Polo", "Passat", "Tiguan"),
+                "Toyota" to listOf("Corolla", "Yaris", "Auris", "RAV4"),
+                "Hyundai" to listOf("i20", "i30", "Tucson", "Elantra"),
+                "Kia" to listOf("Picanto", "Rio", "Sportage", "Cerato"),
+                "Fiat" to listOf("500", "Tipo", "Panda", "Punto"),
+                "Seat" to listOf("Ibiza", "Leon", "Arona", "Ateca")
+            )
+            private val locations = listOf("Tunis", "Ariana", "Ben Arous", "Sfax", "Sousse", "Nabeul", "Bizerte", "Monastir", "Gabès", "Médenine")
+            private val sources = listOf("Tayara", "9annas", "Tunisie-Annonce")
             
-            @POST("api/scrape")
-            suspend fun triggerScrape(): ApiResponse<String>
-        }
-        
-        object RetrofitClient {
-            private const val BASE_URL = "https://car-monitor-api.onrender.com/"
-            
-            val apiService: ApiService by lazy {
-                Retrofit.Builder()
-                    .baseUrl(BASE_URL)
-                    .addConverterFactory(GsonConverterFactory.create())
-                    .build()
-                    .create(ApiService::class.java)
+            fun generateListings(count: Int, newCount: Int = 0): List<CarListing> {
+                return (1..count).map { index ->
+                    val brand = brands.random()
+                    val model = models[brand]?.random() ?: ""
+                    val year = (2010..2023).random()
+                    val price = when (brand) {
+                        "Mercedes", "BMW", "Audi" -> (50000..150000).random().toDouble()
+                        "Volkswagen", "Toyota" -> (30000..80000).random().toDouble()
+                        else -> (15000..50000).random().toDouble()
+                    }
+                    
+                    CarListing(
+                        id = "listing_$index",
+                        source = sources.random(),
+                        title = "$brand $model $year",
+                        price = price,
+                        location = locations.random(),
+                        year = year,
+                        imageUrl = "https://via.placeholder.com/300x200?text=$brand+$model",
+                        listingUrl = "https://www.tayara.tn/item/${index}",
+                        publishedDate = java.time.LocalDateTime.now().minusHours(Random.nextLong(1, 48)).toString(),
+                        isNew = index <= newCount
+                    )
+                }.sortedByDescending { it.publishedDate }
             }
         }
         EOF
         
-        # Repository
         cat > app/src/main/java/com/carmonitor/app/data/Repository.kt << 'EOF'
         package com.carmonitor.app.data
         
+        import kotlinx.coroutines.delay
+        import kotlin.random.Random
+        
         class CarRepository {
-            private val api = RetrofitClient.apiService
+            private var cachedListings = FakeDataGenerator.generateListings(20, 3)
             
             suspend fun getListings(): Result<List<CarListing>> {
-                return try {
-                    val response = api.getListings()
-                    if (response.success && response.data != null) {
-                        Result.success(response.data)
-                    } else {
-                        Result.failure(Exception(response.error ?: "Error"))
-                    }
-                } catch (e: Exception) {
-                    Result.failure(e)
-                }
+                delay(500) // Simulate network
+                return Result.success(cachedListings)
             }
             
-            suspend fun triggerScrape(): Result<String> {
-                return try {
-                    val response = api.triggerScrape()
-                    if (response.success) {
-                        Result.success("OK")
-                    } else {
-                        Result.failure(Exception(response.error ?: "Error"))
-                    }
-                } catch (e: Exception) {
-                    Result.failure(e)
-                }
+            suspend fun refreshListings(): Result<List<CarListing>> {
+                delay(1500) // Simulate scraping
+                
+                // Générer 2-5 nouvelles annonces
+                val newCount = Random.nextInt(2, 6)
+                val newListings = FakeDataGenerator.generateListings(newCount, newCount)
+                
+                // Marquer les anciennes comme non nouvelles
+                cachedListings = cachedListings.map { it.copy(isNew = false) }
+                
+                // Ajouter les nouvelles
+                cachedListings = (newListings + cachedListings).take(50)
+                
+                return Result.success(cachedListings)
             }
         }
         EOF
         
-        # ViewModel
         cat > app/src/main/java/com/carmonitor/app/ui/HomeViewModel.kt << 'EOF'
         package com.carmonitor.app.ui
         
@@ -260,7 +258,8 @@ jobs:
                         .onSuccess { listings ->
                             _uiState.value = _uiState.value.copy(
                                 listings = listings,
-                                isLoading = false
+                                isLoading = false,
+                                newCount = listings.count { it.isNew }
                             )
                         }
                         .onFailure { error ->
@@ -275,11 +274,24 @@ jobs:
             fun refresh() {
                 viewModelScope.launch {
                     _uiState.value = _uiState.value.copy(isRefreshing = true)
-                    repository.triggerScrape()
-                    kotlinx.coroutines.delay(2000)
-                    loadListings()
-                    _uiState.value = _uiState.value.copy(isRefreshing = false)
+                    repository.refreshListings()
+                        .onSuccess { listings ->
+                            val newCount = listings.count { it.isNew }
+                            _uiState.value = _uiState.value.copy(
+                                listings = listings,
+                                isRefreshing = false,
+                                newCount = newCount,
+                                showNewNotification = newCount > 0
+                            )
+                        }
+                        .onFailure {
+                            _uiState.value = _uiState.value.copy(isRefreshing = false)
+                        }
                 }
+            }
+            
+            fun dismissNotification() {
+                _uiState.value = _uiState.value.copy(showNewNotification = false)
             }
         }
         
@@ -287,16 +299,18 @@ jobs:
             val isLoading: Boolean = false,
             val isRefreshing: Boolean = false,
             val listings: List<CarListing> = emptyList(),
+            val newCount: Int = 0,
+            val showNewNotification: Boolean = false,
             val error: String? = null
         )
         EOF
         
-        # UI
         cat > app/src/main/java/com/carmonitor/app/ui/CarMonitorApp.kt << 'EOF'
         package com.carmonitor.app.ui
         
         import android.content.Intent
         import android.net.Uri
+        import androidx.compose.animation.*
         import androidx.compose.foundation.clickable
         import androidx.compose.foundation.layout.*
         import androidx.compose.foundation.lazy.LazyColumn
@@ -324,7 +338,7 @@ jobs:
         @Composable
         fun CarMonitorApp(viewModel: HomeViewModel = viewModel()) {
             val uiState by viewModel.uiState.collectAsState()
-            var showSettings by remember { mutableStateOf(false) }
+            var showInfo by remember { mutableStateOf(false) }
             
             Scaffold(
                 topBar = {
@@ -332,16 +346,28 @@ jobs:
                         title = {
                             Column {
                                 Text("🚗 Car Monitor")
-                                if (uiState.isRefreshing) {
-                                    Text("Actualisation...", style = MaterialTheme.typography.bodySmall)
-                                } else {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("${uiState.listings.size} annonces", style = MaterialTheme.typography.bodySmall)
+                                    if (uiState.newCount > 0) {
+                                        Spacer(Modifier.width(8.dp))
+                                        Surface(
+                                            color = Color(0xFF4CAF50),
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Text(
+                                                "${uiState.newCount} nouvelles",
+                                                Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color.White
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         },
                         actions = {
-                            IconButton(onClick = { showSettings = true }) {
-                                Icon(Icons.Default.Settings, "Paramètres")
+                            IconButton(onClick = { showInfo = true }) {
+                                Icon(Icons.Default.Info, "Info")
                             }
                             IconButton(
                                 onClick = { viewModel.refresh() },
@@ -354,24 +380,50 @@ jobs:
                             containerColor = MaterialTheme.colorScheme.primaryContainer
                         )
                     )
+                },
+                snackbarHost = {
+                    AnimatedVisibility(
+                        visible = uiState.showNewNotification,
+                        enter = slideInVertically() + fadeIn(),
+                        exit = slideOutVertically() + fadeOut()
+                    ) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color(0xFF4CAF50)
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Notifications, null, tint = Color.White)
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    "${uiState.newCount} nouvelles annonces trouvées!",
+                                    modifier = Modifier.weight(1f),
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                IconButton(onClick = { viewModel.dismissNotification() }) {
+                                    Icon(Icons.Default.Close, null, tint = Color.White)
+                                }
+                            }
+                        }
+                    }
                 }
             ) { padding ->
                 Box(modifier = Modifier.padding(padding)) {
                     when {
-                        uiState.isLoading && uiState.listings.isEmpty() -> LoadingScreen()
-                        uiState.error != null && uiState.listings.isEmpty() -> ErrorScreen(uiState.error!!) { viewModel.loadListings() }
-                        else -> ListingsScreen(uiState.listings)
-                    }
-                    
-                    if (uiState.isRefreshing) {
-                        LinearProgressIndicator(
-                            modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
-                        )
+                        uiState.isLoading -> LoadingScreen()
+                        else -> ListingsScreen(uiState.listings, uiState.isRefreshing)
                     }
                 }
                 
-                if (showSettings) {
-                    SettingsDialog { showSettings = false }
+                if (showInfo) {
+                    InfoDialog { showInfo = false }
                 }
             }
         }
@@ -388,40 +440,47 @@ jobs:
         }
         
         @Composable
-        fun ErrorScreen(error: String, onRetry: () -> Unit) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)) {
-                    Icon(Icons.Default.ErrorOutline, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.error)
-                    Spacer(Modifier.height(16.dp))
-                    Text("Erreur de connexion", style = MaterialTheme.typography.titleLarge)
-                    Text(error, style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
-                    Spacer(Modifier.height(16.dp))
-                    Button(onClick = onRetry) {
-                        Text("Réessayer")
-                    }
-                }
-            }
-        }
-        
-        @Composable
-        fun ListingsScreen(listings: List<CarListing>) {
-            if (listings.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.DirectionsCar, null, Modifier.size(64.dp), tint = Color.Gray)
-                        Spacer(Modifier.height(16.dp))
-                        Text("Aucune annonce", style = MaterialTheme.typography.titleLarge)
-                        Text("Appuyez sur actualiser", color = Color.Gray)
-                    }
-                }
-            } else {
+        fun ListingsScreen(listings: List<CarListing>, isRefreshing: Boolean) {
+            Box {
                 LazyColumn(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    item {
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer
+                            )
+                        ) {
+                            Column(Modifier.padding(16.dp)) {
+                                Text(
+                                    "📊 Mode Démonstration",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    "Cette version fonctionne avec des données simulées.",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    "Appuyez sur 🔄 pour simuler de nouvelles annonces!",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.Gray
+                                )
+                            }
+                        }
+                    }
+                    
                     items(listings, key = { it.id }) { listing ->
                         ListingCard(listing)
                     }
+                }
+                
+                if (isRefreshing) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
+                    )
                 }
             }
         }
@@ -442,8 +501,6 @@ jobs:
                         model = ImageRequest.Builder(context)
                             .data(listing.imageUrl)
                             .crossfade(true)
-                            .placeholder(android.R.drawable.ic_menu_gallery)
-                            .error(android.R.drawable.ic_menu_gallery)
                             .build(),
                         contentDescription = listing.title,
                         modifier = Modifier.size(100.dp).clip(RoundedCornerShape(8.dp)),
@@ -455,7 +512,7 @@ jobs:
                     Column(Modifier.weight(1f)) {
                         if (listing.isNew) {
                             Surface(color = Color(0xFF4CAF50), shape = RoundedCornerShape(4.dp)) {
-                                Text("NOUVEAU", Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                Text("🆕 NOUVEAU", Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                     style = MaterialTheme.typography.labelSmall, color = Color.White)
                             }
                             Spacer(Modifier.height(4.dp))
@@ -466,7 +523,7 @@ jobs:
                         
                         Spacer(Modifier.height(4.dp))
                         
-                        Text("${listing.price?.toInt()?.let { "%,d".format(it) } ?: "N/A"} ${listing.currency}",
+                        Text("${"%,d".format(listing.price.toInt())} ${listing.currency}",
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold)
@@ -477,12 +534,12 @@ jobs:
                             Icon(Icons.Default.LocationOn, null, Modifier.size(16.dp), tint = Color.Gray)
                             Spacer(Modifier.width(4.dp))
                             Text(listing.location, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                            listing.year?.let {
-                                Text(" • $it", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                            }
+                            Text(" • ${listing.year}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                         }
                         
-                        Text("Source: ${listing.source}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        Spacer(Modifier.height(4.dp))
+                        
+                        Text("📱 Source: ${listing.source}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     }
                     
                     Icon(Icons.Default.OpenInNew, "Ouvrir", tint = MaterialTheme.colorScheme.primary)
@@ -491,27 +548,50 @@ jobs:
         }
         
         @Composable
-        fun SettingsDialog(onDismiss: () -> Unit) {
-            var phone by remember { mutableStateOf("") }
-            
+        fun InfoDialog(onDismiss: () -> Unit) {
             AlertDialog(
                 onDismissRequest = onDismiss,
-                title = { Text("⚙️ Notifications SMS") },
+                title = { Text("ℹ️ À propos de Car Monitor") },
                 text = {
                     Column {
-                        Text("Recevez un SMS pour chaque nouvelle annonce")
-                        Spacer(Modifier.height(16.dp))
-                        OutlinedTextField(
-                            value = phone,
-                            onValueChange = { phone = it },
-                            label = { Text("Numéro (+216)") },
-                            modifier = Modifier.fillMaxWidth()
+                        Text(
+                            "Version: 3.0 (Démo)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.height(16.dp))
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                        
+                        Text("✅ Fonctionnalités:", fontWeight = FontWeight.Bold)
+                        Text("• Interface complète Material Design 3")
+                        Text("• Simulation de nouvelles annonces")
+                        Text("• Données réalistes (20+ voitures)")
+                        Text("• Badge 'NOUVEAU' sur nouvelles annonces")
+                        
+                        Spacer(Modifier.height(16.dp))
+                        
+                        Text("🔜 Prochaines étapes:", fontWeight = FontWeight.Bold)
+                        Text("• Connecter au vrai backend")
+                        Text("• Scraping des sites réels")
+                        Text("• Notifications SMS via Twilio")
+                        Text("• Filtres personnalisables")
+                        
+                        Spacer(Modifier.height(16.dp))
+                        
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                            )
+                        ) {
                             Column(Modifier.padding(12.dp)) {
-                                Text("ℹ️ Déployez le backend sur Render pour activer les SMS",
-                                    style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    "💡 Astuce",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    "Appuyez sur le bouton 🔄 pour simuler l'arrivée de nouvelles annonces!",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
                             }
                         }
                     }
@@ -523,7 +603,6 @@ jobs:
         }
         EOF
         
-        # MainActivity
         cat > app/src/main/java/com/carmonitor/app/MainActivity.kt << 'EOF'
         package com.carmonitor.app
         
@@ -550,45 +629,29 @@ jobs:
         }
         EOF
         
-        # App class
-        cat > app/src/main/java/com/carmonitor/app/CarMonitorApp.kt << 'EOF'
-        package com.carmonitor.app
-        
-        import android.app.Application
-        
-        class CarMonitorApp : Application() {
-            override fun onCreate() {
-                super.onCreate()
-            }
-        }
-        EOF
-        
         cat > app/proguard-rules.pro << 'EOF'
         -keep class com.carmonitor.app.** { *; }
         EOF
         
-        echo "✅ Project created!"
+        echo "✅ Standalone app created!"
     
     - uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
     
-    - uses: android-actions/setup-android@v4
-    
+    - uses: android-actions/setup-android@v3
     - run: yes | sdkmanager --licenses || true
-    
-    - uses: gradle/actions/setup-gradle@v4
+    - uses: gradle/actions/setup-gradle@v3
       with:
         gradle-version: '8.2'
     
     - run: gradle wrapper
     - run: chmod +x gradlew
     - run: ./gradlew :app:assembleDebug --stacktrace
-    
-    - run: cp app/build/outputs/apk/debug/app-debug.apk CarMonitor-v2.0-FINAL.apk
+    - run: cp app/build/outputs/apk/debug/app-debug.apk CarMonitor-v3.0-STANDALONE.apk
     
     - uses: actions/upload-artifact@v4
       with:
-        name: CarMonitor-FINAL
-        path: CarMonitor-v2.0-FINAL.apk
+        name: CarMonitor-Standalone
+        path: CarMonitor-v3.0-STANDALONE.apk
