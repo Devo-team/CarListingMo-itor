@@ -25,7 +25,7 @@ TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_PHONE = os.getenv("TWILIO_PHONE", "")
 
-# Stockage temporaire (en production, utilisez MongoDB)
+# Stockage en mémoire
 listings_db = []
 filters_db = []
 
@@ -49,14 +49,13 @@ class UserFilter(BaseModel):
     locations: List[str] = []
     notifySMS: bool = True
 
-# SCRAPING RÉEL
 async def scrape_tayara():
     """Scrape Tayara.tn"""
     listings = []
     try:
         async with aiohttp.ClientSession() as session:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
             
             url = "https://www.tayara.tn/ads/c/V%C3%A9hicules"
@@ -64,56 +63,62 @@ async def scrape_tayara():
             async with session.get(url, headers=headers, timeout=30) as response:
                 if response.status == 200:
                     html = await response.text()
-                    soup = BeautifulSoup(html, 'html.parser')
+                    soup = BeautifulSoup(html, 'html.parser')  # ← html.parser au lieu de lxml
                     
-                    # Chercher les annonces
-                    # Structure à adapter selon le site réel
-                    items = soup.find_all(['article', 'div'], class_=re.compile('listing|item|card|ad'), limit=30)
+                    # Chercher tous les éléments qui pourraient être des annonces
+                    items = soup.find_all(['article', 'div', 'li'], limit=50)
                     
                     for item in items:
                         try:
-                            # Extraire le titre
-                            title_elem = item.find(['h2', 'h3', 'h4', 'a'])
+                            # Chercher le titre
+                            title_elem = item.find(['h2', 'h3', 'h4', 'a', 'span'])
                             if not title_elem:
                                 continue
-                                
+                            
                             title = title_elem.get_text(strip=True)
-                            if len(title) < 10:
+                            
+                            # Filtrer les titres trop courts
+                            if len(title) < 15 or 'cookie' in title.lower() or 'menu' in title.lower():
                                 continue
                             
-                            # Extraire le prix
-                            price_elem = item.find(string=re.compile(r'\d+.*(?:TND|DT|DH)', re.I))
+                            # Chercher le prix
                             price = None
-                            if price_elem:
-                                price_match = re.search(r'(\d+[\s,]*\d*)', str(price_elem))
+                            price_text = item.find(string=re.compile(r'\d+.*(?:TND|DT|dt)', re.I))
+                            if price_text:
+                                price_match = re.search(r'(\d+[\s,\.]*\d*)', str(price_text))
                                 if price_match:
-                                    price_str = price_match.group(1).replace(' ', '').replace(',', '')
+                                    price_str = price_match.group(1).replace(' ', '').replace(',', '').replace('.', '')
                                     try:
                                         price = float(price_str)
                                     except:
                                         pass
                             
-                            # Extraire la localisation
+                            # Chercher la localisation
                             location = "Tunis"
-                            location_elem = item.find(string=re.compile(r'Tunis|Ariana|Sfax|Sousse|Nabeul', re.I))
+                            location_elem = item.find(string=re.compile(r'Tunis|Ariana|Sfax|Sousse|Nabeul|Ben Arous|Bizerte', re.I))
                             if location_elem:
-                                location = location_elem.strip()
+                                loc_match = re.search(r'(Tunis|Ariana|Sfax|Sousse|Nabeul|Ben Arous|Bizerte)', str(location_elem), re.I)
+                                if loc_match:
+                                    location = loc_match.group(1)
                             
-                            # Extraire l'URL
+                            # Chercher le lien
                             link = item.find('a', href=True)
-                            url = ""
+                            url_link = ""
                             if link:
-                                url = link['href']
-                                if not url.startswith('http'):
-                                    url = f"https://www.tayara.tn{url}"
+                                url_link = link['href']
+                                if url_link and not url_link.startswith('http'):
+                                    url_link = f"https://www.tayara.tn{url_link}"
                             
-                            # Extraire l'image
+                            # Chercher l'image
                             img = item.find('img', src=True)
                             img_url = None
                             if img:
-                                img_url = img['src']
+                                img_url = img.get('src') or img.get('data-src')
                                 if img_url and not img_url.startswith('http'):
-                                    img_url = f"https://www.tayara.tn{img_url}"
+                                    if img_url.startswith('//'):
+                                        img_url = f"https:{img_url}"
+                                    else:
+                                        img_url = f"https://www.tayara.tn{img_url}"
                             
                             # Extraire l'année
                             year = None
@@ -121,7 +126,11 @@ async def scrape_tayara():
                             if year_match:
                                 year = int(year_match.group())
                             
-                            # Créer l'ID unique
+                            # Vérifier qu'on a au moins un titre et un prix
+                            if not title or not price:
+                                continue
+                            
+                            # ID unique
                             listing_id = hashlib.md5(f"{title}{price}{location}".encode()).hexdigest()[:16]
                             
                             listing = CarListing(
@@ -132,7 +141,7 @@ async def scrape_tayara():
                                 location=location,
                                 year=year,
                                 imageUrl=img_url,
-                                listingUrl=url or "https://www.tayara.tn",
+                                listingUrl=url_link or "https://www.tayara.tn",
                                 publishedDate=datetime.now().isoformat(),
                                 isNew=True
                             )
@@ -140,11 +149,12 @@ async def scrape_tayara():
                             listings.append(listing)
                             
                         except Exception as e:
-                            print(f"Erreur parsing item: {e}")
                             continue
+                    
+                    print(f"✅ Tayara: {len(listings)} annonces trouvées")
                             
     except Exception as e:
-        print(f"Erreur scraping Tayara: {e}")
+        print(f"❌ Erreur scraping Tayara: {e}")
     
     return listings
 
@@ -162,9 +172,9 @@ async def scrape_9annas():
             async with session.get(url, headers=headers, timeout=30) as response:
                 if response.status == 200:
                     html = await response.text()
-                    soup = BeautifulSoup(html, 'html.parser')
+                    soup = BeautifulSoup(html, 'html.parser')  # ← html.parser
                     
-                    items = soup.find_all(['article', 'div'], class_=re.compile('ad|listing|item'), limit=30)
+                    items = soup.find_all(['article', 'div', 'li'], limit=50)
                     
                     for item in items:
                         try:
@@ -173,18 +183,21 @@ async def scrape_9annas():
                                 continue
                                 
                             title = title_elem.get_text(strip=True)
-                            if len(title) < 10:
+                            if len(title) < 15:
                                 continue
                             
-                            price_elem = item.find(string=re.compile(r'\d+.*(?:TND|DT)', re.I))
                             price = None
-                            if price_elem:
-                                price_match = re.search(r'(\d+[\s,]*\d*)', str(price_elem))
+                            price_text = item.find(string=re.compile(r'\d+.*(?:TND|DT)', re.I))
+                            if price_text:
+                                price_match = re.search(r'(\d+[\s,]*\d*)', str(price_text))
                                 if price_match:
                                     try:
                                         price = float(price_match.group(1).replace(' ', '').replace(',', ''))
                                     except:
                                         pass
+                            
+                            if not price:
+                                continue
                             
                             location = "Tunis"
                             location_elem = item.find(string=re.compile(r'Tunis|Ariana|Sfax', re.I))
@@ -192,14 +205,14 @@ async def scrape_9annas():
                                 location = location_elem.strip()
                             
                             link = item.find('a', href=True)
-                            url = ""
+                            url_link = ""
                             if link:
-                                url = link['href']
-                                if not url.startswith('http'):
-                                    url = f"https://www.9annas.tn{url}"
+                                url_link = link['href']
+                                if not url_link.startswith('http'):
+                                    url_link = f"https://www.9annas.tn{url_link}"
                             
                             img = item.find('img', src=True)
-                            img_url = img['src'] if img else None
+                            img_url = img.get('src') if img else None
                             
                             year_match = re.search(r'20\d{2}', title)
                             year = int(year_match.group()) if year_match else None
@@ -214,24 +227,25 @@ async def scrape_9annas():
                                 location=location,
                                 year=year,
                                 imageUrl=img_url,
-                                listingUrl=url or "https://www.9annas.tn",
+                                listingUrl=url_link or "https://www.9annas.tn",
                                 publishedDate=datetime.now().isoformat(),
                                 isNew=True
                             )
                             
                             listings.append(listing)
                             
-                        except Exception as e:
-                            print(f"Erreur item 9annas: {e}")
+                        except:
                             continue
+                    
+                    print(f"✅ 9annas: {len(listings)} annonces trouvées")
                             
     except Exception as e:
-        print(f"Erreur scraping 9annas: {e}")
+        print(f"❌ Erreur scraping 9annas: {e}")
     
     return listings
 
 async def scrape_all_sites():
-    """Scrape tous les sites en parallèle"""
+    """Scrape tous les sites"""
     results = await asyncio.gather(
         scrape_tayara(),
         scrape_9annas(),
@@ -249,31 +263,36 @@ async def send_sms_twilio(phone: str, message: str):
     """Envoyer SMS via Twilio"""
     try:
         if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
-            print(f"Twilio non configuré - SMS simulé vers {phone}: {message}")
+            print(f"📱 SMS simulé vers {phone}: {message}")
             return
         
         from twilio.rest import Client
         
         client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         
-        message = client.messages.create(
+        message_obj = client.messages.create(
             to=phone,
             from_=TWILIO_PHONE,
             body=message[:160]
         )
         
-        print(f"✅ SMS envoyé à {phone}: {message.sid}")
+        print(f"✅ SMS envoyé à {phone}: {message_obj.sid}")
         
     except Exception as e:
-        print(f"❌ Erreur envoi SMS: {e}")
+        print(f"❌ Erreur SMS: {e}")
 
-# ROUTES API
 @app.get("/")
 def root():
     return {
         "status": "running",
         "version": "2.0",
-        "endpoints": ["/api/listings", "/api/scrape", "/api/filters"]
+        "listings_count": len(listings_db),
+        "filters_count": len(filters_db),
+        "endpoints": {
+            "listings": "/api/listings",
+            "scrape": "/api/scrape",
+            "filters": "/api/filters"
+        }
     }
 
 @app.get("/api/listings")
@@ -287,7 +306,7 @@ async def get_listings(limit: int = 50):
 
 @app.post("/api/scrape")
 async def trigger_scrape(background_tasks: BackgroundTasks):
-    """Déclencher un scraping manuel"""
+    """Déclencher un scraping"""
     background_tasks.add_task(scrape_and_save)
     return {"success": True, "message": "Scraping démarré"}
 
@@ -295,11 +314,10 @@ async def scrape_and_save():
     """Scraper et sauvegarder"""
     global listings_db
     
-    print("🕷️ Début du scraping...")
+    print("🕷️ Début scraping...")
     new_listings = await scrape_all_sites()
-    print(f"📊 {len(new_listings)} annonces trouvées")
+    print(f"📊 {len(new_listings)} annonces scrapées")
     
-    # Détecter les nouvelles
     existing_ids = {l.id for l in listings_db}
     truly_new = []
     
@@ -308,19 +326,18 @@ async def scrape_and_save():
             truly_new.append(listing)
             listings_db.append(listing)
             
-            # Notifier les utilisateurs
+            # Notifier
             for user_filter in filters_db:
                 if should_notify(listing, user_filter):
                     await notify_user(user_filter, listing)
     
-    # Garder les 100 dernières
     listings_db = sorted(listings_db, key=lambda x: x.publishedDate, reverse=True)[:100]
     
-    print(f"✅ {len(truly_new)} nouvelles annonces ajoutées")
+    print(f"✅ {len(truly_new)} nouvelles annonces")
     return len(truly_new)
 
 def should_notify(listing: CarListing, user_filter: UserFilter) -> bool:
-    """Vérifier si l'utilisateur doit être notifié"""
+    """Vérifier si notifier"""
     if not user_filter.notifySMS:
         return False
     
@@ -335,48 +352,43 @@ def should_notify(listing: CarListing, user_filter: UserFilter) -> bool:
     return True
 
 async def notify_user(user_filter: UserFilter, listing: CarListing):
-    """Envoyer notification SMS"""
-    message = f"🚗 Nouvelle annonce!\n{listing.title}\n💰 {listing.price or 'N/A'} TND\n📍 {listing.location}"
-    
+    """Envoyer SMS"""
+    message = f"🚗 {listing.title}\n💰 {listing.price or 'N/A'} TND\n📍 {listing.location}"
     await send_sms_twilio(user_filter.phone, message)
 
 @app.post("/api/filters")
 async def save_filter(filter_data: UserFilter):
-    """Sauvegarder les préférences"""
+    """Sauvegarder filtre"""
     global filters_db
-    
-    # Supprimer l'ancien filtre de cet utilisateur
     filters_db = [f for f in filters_db if f.userId != filter_data.userId]
-    
-    # Ajouter le nouveau
     filters_db.append(filter_data)
-    
-    return {"success": True, "message": "Filtre enregistré"}
+    return {"success": True}
 
 @app.get("/api/filters/{user_id}")
 async def get_filter(user_id: str):
-    """Récupérer les filtres"""
+    """Récupérer filtre"""
     for f in filters_db:
         if f.userId == user_id:
             return {"success": True, "data": f}
-    
     return {"success": False, "data": None}
 
-# Scraping automatique au démarrage
 @app.on_event("startup")
 async def startup_event():
-    print("🚀 API démarrée")
+    print("🚀 API démarrée - Car Monitor")
     asyncio.create_task(periodic_scraping())
 
 async def periodic_scraping():
-    """Scraping automatique toutes les 15 minutes"""
+    """Scraping périodique"""
+    await asyncio.sleep(60)  # Attendre 1 minute au démarrage
+    
     while True:
         try:
-            await asyncio.sleep(900)  # 15 minutes
-            print("⏰ Scraping périodique...")
+            print("⏰ Scraping automatique...")
             await scrape_and_save()
         except Exception as e:
-            print(f"❌ Erreur scraping périodique: {e}")
+            print(f"❌ Erreur: {e}")
+        
+        await asyncio.sleep(900)  # 15 minutes
 
 if __name__ == "__main__":
     import uvicorn
